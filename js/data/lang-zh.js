@@ -17,6 +17,7 @@ if (G.I18n.lang === 'zh') G.I18n.add({
     '：就是你原本的帳號。如果沒有綁定，就無法找回：請建立新帳號（這次記得在登入時跳出的提示中綁定 Gmail）。',
   'Vincula tu Gmail: si un día olvidas la contraseña, pulsas': '綁定你的 Gmail：如果哪天忘記密碼，只要按',
   'y es tu misma cuenta, con todo lo tuyo.': '，就能回到原本的帳號，所有進度都在。',
+  'Actualización obligatoria: tu partida se guarda y el juego se recarga en {x} s…': '必要更新：你的進度會保存，遊戲將在 {x} 秒後重新載入…',
   'la baja sola si el juego va a tirones (ahora: {x}).': '模式在遊戲卡頓時會自動降低（目前：{x}）。',
   'Kanto': '關都', 'Johto': '城都', 'Hoenn': '豐緣', 'Sinnoh': '神奧', 'Kalos': '卡洛斯', 'Alola': '阿羅拉', 'Galar': '伽勒爾', 'Paldea': '帕底亞',
   'Acero': '鋼',
