@@ -350,6 +350,9 @@ G.DB = (() => {
    * Google Cloud; esto frena las copias que ni lo miran (14-10-2026).
    */
   const HOSTS = ['pokesurvivor.com', 'www.pokesurvivor.com', 'jpter78.github.io', 'localhost', '127.0.0.1'];
+  // Copia propia (p. ej. en tu GitHub Pages): sus dominios van en G.FIREBASE_HOSTS
+  // (firebase-config.js) y sólo valen con un proyecto de Firebase propio.
+  if ((G.FIREBASE_CONFIG || {}).projectId !== 'pokesurvivor-free') HOSTS.push(...(G.FIREBASE_HOSTS || []));
 
   async function initCloud() {
     const cfg = G.FIREBASE_CONFIG;

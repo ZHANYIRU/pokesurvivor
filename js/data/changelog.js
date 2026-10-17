@@ -6,6 +6,10 @@
  * Cada línea en español y en inglés.
  */
 G.CHANGELOG = [
+  { d: '2026-10-17', title: ['Juego en chino tradicional', 'Traditional Chinese version'], new: [
+    ['Nuevo idioma: chino tradicional (繁體中文), en Ajustes > Gráficos > Idioma. Con los nombres oficiales de Pokémon, movimientos y objetos.',
+     'New language: Traditional Chinese (繁體中文), in Settings > Graphics > Language. With the official Pokémon, move and item names.']
+  ] },
   { d: '2026-10-14', title: ['Recupera tu cuenta con Gmail', 'Recover your account with Gmail'], new: [
     ['Si juegas con nombre y contraseña, puedes vincular tu Gmail: si un día olvidas la contraseña, entras con Google y es tu misma cuenta. Te lo ofrecemos al entrar.',
      'If you play with a name and password, you can link your Gmail: if you ever forget your password, sign in with Google and it is the same account. We offer it when you sign in.'],

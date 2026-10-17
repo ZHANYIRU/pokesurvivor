@@ -31,12 +31,14 @@ G.Net = (() => {
   const ALLOW_RELAY = false, RETRY_MS = 15000;
 
   // ---------------- TURN (Cloudflare) ----------------
-  const TURN_URL = 'https://turn.pokesurvivor.com/';
+  // Copia propia: sin TURN (el de turn.pokesurvivor.com es del proyecto oficial y
+  // sólo acepta sus cuentas). Se conecta directo; en redes muy cerradas puede fallar.
+  const TURN_URL = '';
   let turn = null, turnAt = 0, turnReq = null;
   /** Pide (o reutiliza) credenciales TURN. Nunca falla: sin ellas, se sigue como antes. */
   function fetchTurn() {
     const fb = G.DB.fb;
-    if (!fb || fb.emulator || !fb.auth || !fb.auth.currentUser) return Promise.resolve(null);
+    if (!TURN_URL || !fb || fb.emulator || !fb.auth || !fb.auth.currentUser) return Promise.resolve(null);
     if (turn && Date.now() - turnAt < (turn.ttl - 600) * 1000) return Promise.resolve(turn);
     if (turnReq) return turnReq;
     turnReq = fb.auth.currentUser.getIdToken()
