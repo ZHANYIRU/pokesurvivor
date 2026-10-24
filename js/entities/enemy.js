@@ -21,6 +21,31 @@
     return G.U.clamp(Math.round(110 / h * 2) / 2, 1, 2);
   }
 
+  /*
+   * Curas y escudos sobre un jefe (18-10-2026): van con el daño que le estás
+   * haciendo, no con su vida (con 3 curanderos y escudos sobre un jefe de
+   * 20.000 PV no había forma de tumbarlo). rd es el daño recibido con un
+   * olvido de RD_TAU s, así que rd / RD_TAU ≈ daño por segundo de ahora.
+   * Con 3 curanderos encima deshacen como mucho ~1/3 de lo que pegas, y los
+   * escudos (uno cada 6 s) ~1/5: tarda más, pero siempre cae.
+   */
+  const RD_TAU = 6, BOSS_HEAL_S = 0.4, BOSS_SHIELD_S = 1.2;
+  const bossDps = e => e.rd / RD_TAU;
+
+  /*
+   * Veneno (18-10-2026): quita un % de la vida, pero con muchísima vida (los
+   * legendarios de la Sentencia, que doblan cada 5 s) ese % se aplica a una
+   * vida "efectiva" que crece con la raíz: hasta 60.000 PV igual que antes
+   * (los enemigos y jefes normales no pasan de ahí), con 240.000 como si
+   * tuviera 120.000, con 6 millones como si tuviera 600.000.
+   */
+  const PCT_REF = 60000;
+  const pctHp = e => (e.maxHp <= PCT_REF ? e.maxHp : PCT_REF * Math.sqrt(e.maxHp / PCT_REF));
+  // En la Sentencia (23-10-2026), veneno y quemadura quitan poco y siempre lo
+  // mismo (ni % de la vida ni según tu nivel): envenenar y huir no sirve para
+  // tumbar a los legendarios; hay que pegarles. A Arceus no le afectan.
+  const JUDGE_DOT = 1.5;
+
   class Enemy {
     constructor(def, x, y, sc, boss = false) {
       this.id = nextId++;
@@ -44,6 +69,8 @@
       const types = (G.DEX_BY[def.dex] && G.DEX_BY[def.dex].types) || [];
       this.types = types.length ? types : ['normal'];
       this.atkType = this.types[0];         // tipo de sus golpes (tabla de tipos)
+      this.mon = G.DEX_BY[def.dex] || null;   // sus Defensas (G.Stats)
+      this.cat = G.Stats.sideOf(this.mon);    // pega con su lado fuerte: físico o especial
       // Vuelan por encima de rocas y agua sólo los que FLOTAN en su sprite (un
       // Rowlet camina aunque sea Volador). Los jefes, por su tamaño, también.
       this.flying = boss || G.Sprites.hovers(def.dex);
@@ -70,6 +97,7 @@
       // personalidades
       this.sc = sc;                       // escala de la run (para sus invocaciones)
       this.shield = 0; this.shieldT = 0;  // escudo que absorbe daño
+      this.rd = 0;                        // jefes: daño recibido hace poco (ver bossDps)
       this.skillCd = G.U.rand(1, 4);      // escudos / saltos
       this.minions = [];
       this.jump = null;                   // { sx, sy, tx, ty, t, dur }
@@ -100,6 +128,14 @@
     hurt(amount, color = '#fff', dirX = 0, dirY = 0, knock = 0, eff = null) {
       if (this.dead) return;
       const d = Math.max(1, Math.round(amount));
+      // Arceus en la Sentencia: no cae nunca; el golpe suma a su cuenta de daño
+      // (la lleva quien manda: el invitado se lo manda al anfitrión).
+      if (this.arceus) {
+        if (this.remote) G.Coop.hit(this, d, color, 0, 0, 0);
+        else { G.Judgment.hitArceus(d); if (G.Coop.isHost) G.Coop.hurtShown(this, d, color); }
+        this.showHurt(d, color, dirX, dirY, eff);
+        return;
+      }
       // Copia de un enemigo del anfitrión: el golpe se le manda a él, que es
       // quien decide si cae. Aquí sólo se ve (número, destello y animación).
       if (this.remote) {
@@ -108,6 +144,7 @@
         this.showHurt(d, color, dirX, dirY, eff);
         return;
       }
+      if (this.boss) this.rd += d;
       // Escudo: absorbe primero.
       if (this.shield > 0) {
         const a = Math.min(this.shield, d);
@@ -138,16 +175,32 @@
       G.Audio.sfx('hit');
     }
 
+    /** Aturdido: se queda quieto y no ataca `dur` s (Onda Trueno, Tumba Rocas...). */
+    applyStun(dur) {
+      if (this.arceus) return;          // (a Arceus no le afectan los estados)
+      if (this.remote) { G.Coop.status(this, 't', dur); return; }
+      this.stunT = Math.max(this.stunT || 0, dur);
+    }
+
+    /** Dormido (Soporesfera): quieto, sin atacar ni hacer daño al tocarte, aunque le peguen. */
+    applySleep(dur) {
+      if (this.remote || this.arceus) return;
+      this.sleepT = Math.max(this.sleepT || 0, dur);
+    }
+
     applySlow(factor, dur = 1.2) {
+      if (this.arceus) return;
       if (this.remote) { G.Coop.status(this, 's', factor); return; }
       this.slow = Math.max(this.slow, factor);
       this.slowT = Math.max(this.slowT, dur);
     }
     applyBurn(stacks = 1) {
+      if (this.arceus) return;
       if (this.remote) { G.Coop.status(this, 'b', stacks); return; }
       this.burn = Math.min(8, this.burn + stacks); this.burnT = 3;
     }
     applyPoison(stacks = 1) {
+      if (this.arceus) return;
       if (this.remote) { G.Coop.status(this, 'p', stacks); return; }
       this.poison = Math.min(8, this.poison + stacks); this.poisonT = 4;
     }
@@ -248,18 +301,19 @@
         }
       }
       if (this.touchCd > 0) this.touchCd -= dt;
+      if (this.rd > 0) this.rd *= Math.exp(-dt / RD_TAU);
       this.bob += dt * 6;
 
       // --- estados ---
       if (this.slowT > 0) { this.slowT -= dt; if (this.slowT <= 0) this.slow = 0; }
       if (this.burn > 0) {
         this.burnT -= dt; this.burnTick -= dt;
-        if (this.burnTick <= 0) { this.burnTick = 0.5; this.hurt(1.6 * this.burn * (1 + pl.level * 0.06), '#ff9a4d'); }
+        if (this.burnTick <= 0) { this.burnTick = 0.5; this.hurt(this.judge ? JUDGE_DOT * this.burn : 1.6 * this.burn * (1 + pl.level * 0.06), '#ff9a4d'); }
         if (this.burnT <= 0) this.burn = 0;
       }
       if (this.poison > 0) {
         this.poisonT -= dt; this.poisonTick -= dt;
-        if (this.poisonTick <= 0) { this.poisonTick = 0.6; this.hurt(this.maxHp * 0.012 * this.poison + 1, '#d47cf0'); }
+        if (this.poisonTick <= 0) { this.poisonTick = 0.6; this.hurt(this.judge ? JUDGE_DOT * this.poison : pctHp(this) * 0.012 * this.poison + 1, '#d47cf0'); }
         if (this.poisonT <= 0) this.poison = 0;
       }
       if (this.dead) return;
@@ -275,6 +329,15 @@
           if (this.dead) return;
         } else if (le.slow) terrainMul = le.slow < 0.5 ? 0.45 : 0.55;
       }
+
+      if (this.sleepT > 0) {
+        // Dormido no anda, pero un empujón (Rafagaesfera) sí lo mueve.
+        this.sleepT -= dt; this.anim.loop('Idle');
+        this.x += this.kx * dt; this.y += this.ky * dt;
+        this.kx *= Math.pow(0.0015, dt); this.ky *= Math.pow(0.0015, dt);
+        return;
+      }
+      if (this.stunT > 0) { this.stunT -= dt; this.anim.loop('Idle'); return; }
 
       const spd = this.spd * (1 - this.slow) * terrainMul * G.Weather.speedFor(this.types);
       let [dx, dy] = G.U.norm(pl.x - this.x, pl.y - this.y);
@@ -470,18 +533,18 @@
       switch (id) {
         case 'slam':       // pisotón: onda alrededor
           c.wind = 0.85 * f;
-          G.Hazards.add({ kind: 'zone', x: this.x, y: this.y, r: 96 + this.r, delay: c.wind, dmg: this.dmg * 1.3, type, color: col });
+          this.hazard({ kind: 'zone', x: this.x, y: this.y, r: 96 + this.r, delay: c.wind, dmg: this.dmg * 1.3, type, color: col });
           this.anim.play('Charge', { speed: 1.2 });
           break;
         case 'dash':       // embestida en línea recta
           c.wind = 0.75 * f; c.len = 330; c.dur = 0.32;
-          G.Hazards.add({ kind: 'beam', x: this.x, y: this.y, angle: ang, len: c.len + this.r, w: this.r * 2 + 16,
+          this.hazard({ kind: 'beam', x: this.x, y: this.y, angle: ang, len: c.len + this.r, w: this.r * 2 + 16,
                           delay: c.wind + c.dur, dmg: this.dmg * 1.2, type, color: col });
           this.anim.play('Charge', { speed: 1.3 });
           break;
         case 'leap':       // salto y caída sobre ti
           this.jump = { sx: this.x, sy: this.y, tx: pl.x, ty: pl.y, t: -0.5 * f, dur: 0.65 };
-          G.Hazards.add({ kind: 'zone', x: pl.x, y: pl.y, r: 82, delay: 0.5 * f + 0.65, dmg: this.dmg * 1.25, type, color: col });
+          this.hazard({ kind: 'zone', x: pl.x, y: pl.y, r: 82, delay: 0.5 * f + 0.65, dmg: this.dmg * 1.25, type, color: col });
           this.anim.play('Charge', { speed: 1.4 });
           ai.cast = null; ai.cd = G.U.rand(1.4, 2) + 0.6;
           break;
@@ -489,7 +552,7 @@
           const n = ai.fury ? 6 : 4;
           for (let i = 0; i < n; i++) {
             const a = i ? Math.random() * 6.2832 : 0, d = i ? G.U.rand(40, 120) : 0;
-            G.Hazards.add({ kind: 'zone', x: pl.x + Math.cos(a) * d, y: pl.y + Math.sin(a) * d * 0.8, r: 50,
+            this.hazard({ kind: 'zone', x: pl.x + Math.cos(a) * d, y: pl.y + Math.sin(a) * d * 0.8, r: 50,
                             delay: 1.05 + i * 0.12, dmg: this.shotDmg() * 1.15, type, color: col });
           }
           c.wind = 0.5; this.anim.play('Shoot');
@@ -498,7 +561,7 @@
         case 'beam': {     // rayos en abanico
           const n = ai.fury ? 5 : 3, sp = ai.fury ? 0.42 : 0.5;
           for (let i = 0; i < n; i++) {
-            G.Hazards.add({ kind: 'beam', x: this.x, y: this.y, angle: ang + (i - (n - 1) / 2) * sp, len: 400, w: 26,
+            this.hazard({ kind: 'beam', x: this.x, y: this.y, angle: ang + (i - (n - 1) / 2) * sp, len: 400, w: 26,
                             delay: 1.0, dmg: this.shotDmg() * 1.2, type, color: col });
           }
           c.wind = 1.0; c.after = 0.25; this.anim.play('Charge', { speed: 1.1 });
@@ -553,7 +616,7 @@
         const a = base + (n === 1 ? 0 : (i / (n - 1) - 0.5) * spread);
         const shot = G.Projectiles.spawn({
           x: this.x, y: this.y, vx: Math.cos(a) * sp, vy: Math.sin(a) * sp,
-          dmg: this.shotDmg() * k, r: 7, life: 2.4, friendly: false, color: '#ff7a9e', mtype: type,
+          dmg: this.shotDmg() * k, r: 7, life: 2.4, friendly: false, color: '#ff7a9e', mtype: type, cat: this.cat,
           vis: G.VFX.forType(type)
         });
         if (G.Coop.isHost) G.Coop.enemyShot(shot, type);
@@ -562,6 +625,9 @@
       G.FX.ring(this.x, this.y - G.LIFT, 4, 14, '#ff7a9e', 0.2, 2);
     }
 
+    /** Zona o rayo con aviso, con la categoría de sus golpes (tu defensa que la para). */
+    hazard(o) { G.Hazards.add(Object.assign({ cat: this.cat }, o)); }
+
     /** Lo que hace cada personalidad cuando le toca (anfitrión / solitario). */
     special(pl, dx, dy) {
       const col = G.U.TYPE_COLOR[this.atkType] || '#ff7a9e';
@@ -569,14 +635,14 @@
         case 'fan': { const n = this.def.fanN || 5; this.shoot(dx, dy, n === 3 ? 0.6 : 0.9, n, 0.65); break; }
         case 'beamer':
           // Rayo con aviso: primero se ve la franja en el suelo.
-          G.Hazards.add({ kind: 'beam', x: this.x, y: this.y, angle: Math.atan2(dy, dx), len: 360, w: 22,
+          this.hazard({ kind: 'beam', x: this.x, y: this.y, angle: Math.atan2(dy, dx), len: 360, w: 22,
                           delay: 1.0, dmg: this.shotDmg() * 1.05, type: this.atkType, color: col });
           this.anim.play('Charge', { speed: 1.2 });
           break;
         case 'zoner': {
           const n = G.U.randInt(1, this.def.zones || 3);
           for (let i = 0; i < n; i++) {
-            G.Hazards.add({ kind: 'zone', x: pl.x + (i ? G.U.rand(-70, 70) : 0), y: pl.y + (i ? G.U.rand(-55, 55) : 0), r: 44,
+            this.hazard({ kind: 'zone', x: pl.x + (i ? G.U.rand(-70, 70) : 0), y: pl.y + (i ? G.U.rand(-55, 55) : 0), r: 44,
                             delay: 1.2, dmg: this.shotDmg() * 0.95, type: this.atkType, color: col });
           }
           this.anim.play('Shoot');
@@ -598,7 +664,9 @@
       let n = 0;
       for (const e of G.EnemyMgr.queryCircle(this.x, this.y, 150)) {
         if (e.dead || e.hp >= e.maxHp) continue;
-        e.hp = Math.min(e.maxHp, e.hp + e.maxHp * k);
+        // A un jefe, como mucho lo que le quitas en 0,4 s: así nunca se vuelve inmatable.
+        const heal = e.maxHp * k;
+        e.hp = Math.min(e.maxHp, e.hp + (e.boss ? Math.min(heal, bossDps(e) * BOSS_HEAL_S) : heal));
         G.FX.burst(e.x, e.y - e.bodyH * 0.6, '#7dffb0', 5, 60);
         n++;
       }
@@ -611,7 +679,13 @@
     castShields() {
       const near = G.EnemyMgr.queryCircle(this.x, this.y, 160).filter(e => !e.dead)
         .sort((a, b) => G.U.dist2(a.x, a.y, this.x, this.y) - G.U.dist2(b.x, b.y, this.x, this.y)).slice(0, 6);
-      for (const e of near) { e.shield = Math.max(e.shield, e.maxHp * 0.35); e.shieldT = 8; }
+      // A un jefe, el escudo es lo que le quitas en 1,2 s (no un 35 % de su vida
+      // enorme), y uno cada 6 s aunque haya varios escuderos (shieldT empieza en 8).
+      for (const e of near) {
+        if (e.boss && e.shieldT > 2) continue;
+        const s = e.boss ? Math.min(e.maxHp * 0.35, bossDps(e) * BOSS_SHIELD_S) : e.maxHp * 0.35;
+        e.shield = Math.max(e.shield, s); e.shieldT = 8;
+      }
       this.anim.play('Charge');
       G.FX.ring(this.x, this.y, 8, 160, '#7fc8ff', 0.5, 3);
       if (G.Coop.isHost) G.Coop.broadcast(['fxr', Math.round(this.x), Math.round(this.y), 160, '#7fc8ff']);
@@ -638,14 +712,14 @@
 
     startFuse() {
       this.phase = 'fuse'; this.pt = 1.0;
-      G.Hazards.add({ kind: 'zone', x: this.x, y: this.y, r: 62, delay: 1.0, dmg: this.dmg * 1.4, type: this.atkType, color: '#ff7b3d' });
+      this.hazard({ kind: 'zone', x: this.x, y: this.y, r: 62, delay: 1.0, dmg: this.dmg * 1.4, type: this.atkType, color: '#ff7b3d', boom: true });
     }
 
     startJump(pl) {
       const tx = pl.x, ty = pl.y;
       this.jump = { sx: this.x, sy: this.y, tx, ty, t: -0.45, dur: 0.6 };
       this.anim.play('Charge', { speed: 1.4 });
-      G.Hazards.add({ kind: 'zone', x: tx, y: ty, r: 50, delay: 1.05, dmg: this.dmg * 1.2, type: this.atkType,
+      this.hazard({ kind: 'zone', x: tx, y: ty, r: 50, delay: 1.05, dmg: this.dmg * 1.2, type: this.atkType,
                       color: G.U.TYPE_COLOR[this.atkType] || '#ff7a9e' });
     }
 
@@ -697,6 +771,30 @@
       ctx.restore();
 
       if (this.dead) return;
+      // Aturdido: estrellitas girando sobre la cabeza.
+      if (this.stunT > 0) {
+        const now = performance.now() / 1000;
+        for (let i = 0; i < 3; i++) {
+          const a = now * 5 + i * 2.094;
+          G.VFX.draw(ctx, 'star', 'electric', this.x + Math.cos(a) * 9, this.y - lift - this.bodyH - 6 + Math.sin(a) * 3, { scale: 0.6 });
+        }
+      }
+
+      // Dormido: zetas que suben (en cooperativo, del anfitrión: bit 16).
+      if (this.sleepT > 0 || (this.net && this.net.st & 16)) {
+        const now = performance.now() / 1000;
+        ctx.save();
+        ctx.textAlign = 'center';
+        for (let i = 0; i < 2; i++) {
+          const k = (now * 0.7 + i * 0.5) % 1;
+          ctx.globalAlpha = 1 - k;
+          ctx.font = '700 ' + (7 + k * 5).toFixed(1) + 'px Pixelify,"Segoe UI",sans-serif';
+          ctx.fillStyle = '#c9b8ff'; ctx.strokeStyle = '#1b1528'; ctx.lineWidth = 2;
+          const zx = this.x + 6 + k * 8, zy = this.y - lift - this.bodyH - 4 - k * 14;
+          ctx.strokeText('Z', zx, zy); ctx.fillText('Z', zx, zy);
+        }
+        ctx.restore();
+      }
 
       // Escudo: burbuja azul.
       if (this.shield > 0 || (this.net && this.net.st & 4)) {
@@ -762,6 +860,7 @@
       e.remote = true;
       if (o.shiny) e.makeShiny();
       e.maxHp = o.hp; e.hp = o.hp;
+      if (o.beh === 'arceus') G.Judgment.dress(e);
       e.net = { x: o.x, y: o.y, vx: 0, vy: 0, age: 0, dir: 0, anim: 0, st: 0 };
       list.push(e);
       byId.set(e.id, e);
@@ -883,6 +982,7 @@
      */
     // Segundos que un rezagado tiene que llevar fuera de la vista antes de volver por delante.
     const LAG_T = 2.5;
+    const BOSS_FAR = 2500;    // jefe más lejos que esto de todos: se ha perdido (ver update)
 
     function update(dt, players) {
       if (!Array.isArray(players)) players = [players];
@@ -907,6 +1007,7 @@
         if (e.remote) continue;
         if (e.dead) {
           pl.kills++;
+          if (pl.abil && pl.abil.kill) pl.abil.kill(pl, e);     // Autoestima y parecidas
           if (e.boss && !e.judge) pl.bosses++;
           G.Progress.kill(e);
           corpses.push(e);
@@ -924,7 +1025,14 @@
           if (G.Coop.isHost) G.Coop.enemyGone(e, false);
           continue;
         }
-        if (e.boss || e.shiny || G.Rift.inArena) continue;
+        // Jefe lejísimos de todos (salió junto a un compañero que aún volvía de la
+        // grieta, o se quedó atrás): a los 4 s vuelve a salir cerca, fuera de la vista.
+        // Si no, no se le encontraba y, con un jefe vivo, no salen grietas.
+        if (e.boss && !e.judge && !G.Rift.inArena) {
+          e.lagT = G.U.dist2(e.x, e.y, near.x, near.y) > BOSS_FAR * BOSS_FAR ? e.lagT + dt : 0;
+          if (e.lagT > 4) { e.lagT = 0; G.Spawner.ahead(e, near); }
+        }
+        if (e.boss || e.shiny || e.arceus || G.Rift.inArena) continue;
         // Rezagados: los que se quedan atrás mientras corres y llevan un rato
         // FUERA DE LA VISTA (de todos) vuelven a salir por delante de ti. Así
         // no se puede huir sin más, y nunca desaparece uno que estés viendo.
@@ -951,7 +1059,7 @@
     function drawables(cam) {
       const out = [];
       for (const e of corpses) if (cam.sees(e.x, e.y, 80)) out.push(e);
-      for (const e of list) if (cam.sees(e.x, e.y, 80)) out.push(e);
+      for (const e of list) if (!e.arceus && cam.sees(e.x, e.y, 80)) out.push(e);   // (Arceus lo dibuja judgment.js)
       return out;
     }
 

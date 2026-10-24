@@ -36,8 +36,15 @@ G.Spawner = (() => {
     return (1.6 + t * 0.028 + Math.pow(t / 60, 1.6) * 0.5) * DENSITY;
   }
 
+  /** Radio de "fuera de la vista": el de la cámara, o más si alguien la tiene alejada (Luminosfera). */
+  function outR() {
+    let z = G.Camera.zoom;
+    for (const o of players) if (o.net && o.net.zm > z) z = o.net.zm;
+    return G.Camera.outerRadius() * z / G.Camera.zoom;
+  }
+
   function ringPoint(pl, angle) {
-    const d = G.Camera.outerRadius() + G.U.rand(10, 70);
+    const d = outR() + G.U.rand(10, 70);
     return [pl.x + Math.cos(angle) * d, pl.y + Math.sin(angle) * d * 0.9];
   }
 
@@ -45,7 +52,7 @@ G.Spawner = (() => {
 
   /** ¿Lo vería algún jugador? (para no aparecer delante de nadie) */
   function seenByAnyone(x, y) {
-    const r = G.Camera.outerRadius() - 30;
+    const r = outR() - 30;
     return players.some(o => G.U.dist2(o.x, o.y, x, y) < r * r);
   }
 
@@ -60,9 +67,9 @@ G.Spawner = (() => {
     return null;
   }
 
-  /** Jugador alrededor del que sale el siguiente enemigo. */
+  /** Jugador alrededor del que sale el siguiente enemigo (nunca uno que aún vuelve de la grieta). */
   function anchor() {
-    const alive = players.filter(o => !o.dead);
+    const alive = players.filter(o => !o.dead && !G.Rift.leftBehind(o));
     return alive.length ? G.U.pick(alive) : players[0];
   }
 
@@ -76,8 +83,30 @@ G.Spawner = (() => {
     return Math.random() < SHINY_RATE;
   }
 
+  // Como mucho 3 curanderos, 3 escuderos y 3 invocadores vivos a la vez
+  // (18-10-2026: juntos dejaban a la horda, y a los jefes, casi inmortales).
+  // Si ya hay 3 de uno, sale otro del elenco.
+  const SUPPORT_MAX = 3, SUPPORT = new Set(['healer', 'shielder', 'summoner']);
+  /** Tipos de apoyo que ya tienen 3 vivos. */
+  function supportFull() {
+    const n = {}, full = new Set();
+    for (const e of G.EnemyMgr.all()) {
+      if (!e.dead && SUPPORT.has(e.behavior) && (n[e.behavior] = (n[e.behavior] || 0) + 1) >= SUPPORT_MAX) full.add(e.behavior);
+    }
+    return full;
+  }
+
   function spawnOne(pl, t, angle) {
-    const def = G.U.pick(G.Enemies.bagAt(t));
+    const bag = G.Enemies.bagAt(t);
+    let def = G.U.pick(bag);
+    if (SUPPORT.has(def.behavior)) {
+      const full = supportFull();
+      if (full.has(def.behavior)) {
+        const rest = bag.filter(d => !full.has(d.behavior));
+        if (!rest.length) return null;
+        def = G.U.pick(rest);
+      }
+    }
     const pt = freePoint(pl, angle == null ? Math.random() * 6.2832 : angle, isFlyer(def));
     if (!pt) return null;
     const shiny = rollShiny(def.dex);

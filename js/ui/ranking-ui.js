@@ -1,7 +1,9 @@
 /* ============ ranking-ui.js — pantalla del ranking ============
  * Pestañas Solo / Grupo, periodo (diario ... histórico), todos o sólo amigos,
  * filtro por Pokémon (sólo en el histórico) y tu puesto abajo aunque no salgas
- * en el top. Lo leído se guarda 30 min (ver ranking.js).
+ * en el top. Lo leído se guarda 2 h (ver ranking.js).
+ * Dos mitades (23-10-2026): a la izquierda el daño a Arceus y a la derecha el
+ * tiempo aguantado. Salen de la misma lectura (el mismo resumen).
  */
 G.RankingUI = (() => {
   const $ = G.UI.$;
@@ -11,10 +13,10 @@ G.RankingUI = (() => {
 
   function init() {
     const dl = $('rk-dl');
-    dl.innerHTML = G.DEX.map(p => `<option value="${esc(p.name)}">`).join('');
+    dl.innerHTML = G.DEX.map(p => `<option value="${esc(G.T(p.name))}">`).join('');
     $('rk-poke').onchange = () => {
       const v = $('rk-poke').value.trim().toLowerCase();
-      const p = G.DEX.find(x => x.name.toLowerCase() === v);
+      const p = G.DEX.find(x => (x.name.toLowerCase() === v || G.T(x.name).toLowerCase() === v));
       if (!v) { setDex(null); return; }
       if (!p) { G.UI.toast('No hay ningún Pokémon con ese nombre'); return; }
       setDex(p.dex);
@@ -64,22 +66,23 @@ G.RankingUI = (() => {
 
   async function load() {
     const my = ++token;
-    const list = $('rk-list');
-    list.innerHTML = '<p class="sub">Cargando…</p>';
-    $('rk-me').innerHTML = '';
-    let rows = [], me = null;
+    const list = $('rk-list'), dlist = $('rk-dlist');
+    list.innerHTML = dlist.innerHTML = '<p class="sub">Cargando…</p>';
+    $('rk-me').innerHTML = $('rk-dme').innerHTML = '';
+    let rows = [], me = null, dmg = { rows: [], me: null };
     try {
-      [rows, me] = await Promise.all([
+      [rows, me, dmg] = await Promise.all([
         G.Ranking.top(mode, period, dex, scope === 'friends'),
-        G.Social.me ? G.Ranking.myRank(mode, period, dex) : Promise.resolve(null)
+        G.Social.me ? G.Ranking.myRank(mode, period, dex) : Promise.resolve(null),
+        dex ? Promise.resolve(dmg) : G.Ranking.topDmg(mode, period, scope === 'friends')
       ]);
     } catch (e) {
       if (my !== token) return;
-      list.innerHTML = '<p class="sub">No se pudo cargar el ranking (' + esc(e.code || e.message) + ').</p>';
+      list.innerHTML = dlist.innerHTML = '<p class="sub">No se pudo cargar el ranking (' + esc(e.code || e.message) + ').</p>';
       return;
     }
     if (my !== token) return;
-    list.innerHTML = '';
+    list.innerHTML = dlist.innerHTML = '';
     if (!rows.length) {
       list.innerHTML = '<p class="sub">Todavía no hay marcas aquí. ¡Sé el primero!</p>';
     }
@@ -87,16 +90,27 @@ G.RankingUI = (() => {
     const b = G.Ranking.board(mode, period, dex), done = G.Ranking.reported();
     rows.forEach((r, i) => list.appendChild(rowEl(r, i + 1, r.uids.includes(uid), b, done)));
 
+    // Daño a Arceus (no hay por Pokémon).
+    if (dex) dlist.innerHTML = '<p class="sub">El daño a Arceus no tiene ranking por Pokémon.</p>';
+    else if (!dmg.rows.length) dlist.innerHTML = '<p class="sub">Todavía nadie le ha hecho daño a Arceus aquí. ¡Llega al minuto 30 y pégale!</p>';
+    const db = G.Ranking.board(mode, period);
+    dmg.rows.forEach((r, i) => dlist.appendChild(rowEl(r, i + 1, r.uids.includes(uid), db, done, true)));
+    const dme = $('rk-dme');
+    dme.setAttribute('translate', 'no');
+    dme.textContent = dex || !dmg.me ? '' : dmg.me.out ? G.T('Aún no estás en el top 50 de daño.')
+      : G.I18n.f('Tu puesto: {x}', '#' + dmg.me.pos) + ' · ' + num(dmg.me.d);
+    dme.classList.toggle('hidden', !dme.textContent);
+
     // La frase se monta en cada idioma (traducirla por trozos sale rara).
-    const en = G.I18n.lang === 'en', zh = G.I18n.lang === 'zh';
-    if (zh) {
-      const zpn = { d: '今日', w: '本週', m: '本月', y: '今年', a: '歷來' }[period];
-      const zmon = dex ? G.T(G.DEX_BY[dex].name) : '';
-      const zw = (dex ? '用' + zmon : '') + (mode === 's' ? '單人' : '多人');
-      $('rk-me').innerHTML = !G.Social.me ? 'Elige un apodo (en Amigos) para salir en el ranking.'
-        : `<span translate="no">${me && me.out ? `你還沒進入${zpn}${zw}前 50 名。你的確切名次在「歷來」。`
-          : me ? `你${zpn}${zw}的最佳名次：<b class="gold">#${me.pos}</b> · ${fmt(me.t)}`
-          : `你還沒有${zpn}${zw}的紀錄。`}</span>`;
+    const lang = G.I18n.lang, en = lang === 'en', pos = '#' + (me && me.capped ? '1000+' : me && me.pos);
+    if (lang !== 'es' && !en) {
+      // Otros idiomas: frases enteras sin periodo ni Pokémon (ya se ven en los filtros).
+      const rk = $('rk-me');
+      rk.setAttribute('translate', 'no');
+      rk.textContent = !G.Social.me ? G.T('Elige un apodo (en Amigos) para salir en el ranking.')
+        : me && me.out ? G.T('Aún no estás en el top 50. Tu puesto está en Histórico.')
+        : me ? G.I18n.f('Tu mejor puesto: {x}', pos) + ' · ' + fmt(me.t)
+        : G.T('Aún no tienes marca.');
       return;
     }
     const pn = en ? { d: 'today', w: 'this week', m: 'this month', y: 'this year', a: 'of all time' }[period]
@@ -104,15 +118,19 @@ G.RankingUI = (() => {
     const mon = dex ? G.DEX_BY[dex].name : '';
     const where = en ? (mode === 's' ? 'solo' : 'group') + (dex ? ' with ' + mon : '')
                      : (mode === 's' ? 'en solitario' : 'en grupo') + (dex ? ' con ' + mon : '');
+    $('rk-me').removeAttribute('translate');
     $('rk-me').innerHTML = !G.Social.me ? 'Elige un apodo (en Amigos) para salir en el ranking.'
-      : me && me.out ? (en ? `<span translate="no">You're not in the top 50 ${where} ${pn} yet. Your exact rank is in All-time.</span>`
-                           : `Aún no estás en el top 50 ${pn} ${where}. Tu puesto exacto está en Histórico.`)
-      : me ? (en ? `<span translate="no">Your best ${where} rank ${pn}: <b class="gold">#${me.pos}</b> · ${fmt(me.t)}</span>`
-                 : `Tu mejor puesto ${pn} ${where}: <b class="gold">#${me.pos}</b> · ${fmt(me.t)}`)
+      : me && me.out ? (en ? `<span translate="no">You're not in the top 50 ${where} ${pn} yet. Your rank is in All-time.</span>`
+                           : `Aún no estás en el top 50 ${pn} ${where}. Tu puesto está en Histórico.`)
+      : me ? (en ? `<span translate="no">Your best ${where} rank ${pn}: <b class="gold">${pos}</b> · ${fmt(me.t)}</span>`
+                 : `Tu mejor puesto ${pn} ${where}: <b class="gold">${pos}</b> · ${fmt(me.t)}`)
       : (en ? `<span translate="no">You don't have a ${where} record ${pn} yet.</span>` : `Aún no tienes marca ${pn} ${where}.`);
   }
 
-  function rowEl(r, pos, mine, b, done) {
+  const num = n => (n || 0).toLocaleString(G.I18n.locale);
+
+  /** Una fila: de tiempo o, con dmg, de daño a Arceus. */
+  function rowEl(r, pos, mine, b, done, dmg = false) {
     const el = document.createElement('div');
     el.className = 'rk-row' + (mine ? ' mine' : '') + (pos <= 3 ? ' top' + pos : '');
     el.insertAdjacentHTML('beforeend', `<span class="pos">${pos <= 3 ? G.Icons.html('trophy', 20) : ''}${pos}</span>`);
@@ -121,8 +139,8 @@ G.RankingUI = (() => {
     r.dex.forEach((d, i) => { if (G.DEX_BY[d]) mons.appendChild(G.UI.spriteCanvas(d, 44, 40, { scale: 1, shiny: !!r.shiny[i] })); });
     el.appendChild(mons);
     el.insertAdjacentHTML('beforeend',
-      `<span class="who"><b translate="no">${r.names.map((n, i) => `<a href="#" class="plink" data-u="${esc(r.uids[i] || '')}">${esc(n)}</a>`).join(' · ')}</b><small>Nv. ${r.lv || 1} · ${(r.kills || 0).toLocaleString('es')} derrotados</small></span>
-       <span class="time">${fmt(r.t)}</span>`);
+      `<span class="who"><b translate="no">${r.names.map((n, i) => `<a href="#" class="plink" data-u="${esc(r.uids[i] || '')}">${esc(n)}</a>`).join(' · ')}</b>${dmg ? '' : `<small>Nv. ${r.lv || 1} · ${num(r.kills)} derrotados</small>`}</span>
+       <span class="time">${dmg ? num(r.d) : fmt(r.t)}</span>`);
     el.querySelectorAll('.plink').forEach(a => { a.onclick = e => { e.preventDefault(); G.ProfileUI.show(a.dataset.u); }; });
     // Reportar una marca sospechosa (no la tuya). Lo revisa el admin (mod-ui.js).
     if (!mine && G.Social.me) {

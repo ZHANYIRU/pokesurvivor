@@ -3,6 +3,10 @@
 <html lang="es">
 <head>
 <meta charset="utf-8">
+<!-- Seguridad (18-10-2026): sólo se ejecutan los scripts del juego, de Firebase
+     y de Google (inicio de sesión). Nada metido en la página (onerror=, etiquetas script
+     en un texto...) llega a ejecutarse aunque se colara. Ver js/boot.js. -->
+<meta http-equiv="Content-Security-Policy" content="script-src 'self' file: https://www.gstatic.com https://apis.google.com https://*.firebaseio.com https://*.firebasedatabase.app; object-src 'none'; base-uri 'self'">
 <meta name="robots" content="noindex">
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
 <title>PokéSurvivor – Juego Pokémon gratis online estilo Survivor.io</title>
@@ -27,7 +31,7 @@
 <meta name="twitter:title" content="PokéSurvivor – Sobrevive a las hordas Pokémon">
 <meta name="twitter:description" content="Fan game gratis para navegador y móvil, con cooperativo hasta 4. Sin descargas ni anuncios.">
 <meta name="twitter:image" content="https://pokesurvivor.com/assets/og-image.jpg">
-<script>window.PS_PAGES = true;</script>
+<meta name="ps-pages" content="1">
 <!-- seo:end -->
 <link rel="manifest" href="manifest.webmanifest">
 <!-- Google sólo enseña en los resultados iconos de 48 px o múltiplos -->
@@ -79,6 +83,8 @@
 </script>
 <!-- seo:end -->
 <link rel="stylesheet" href="css/style.css">
+<script src="js/core/locales.js"></script>
+<script src="js/noframe.js"></script>
 </head>
 <body>
 
@@ -166,7 +172,7 @@
 <section id="scr-menu" class="scr hidden">
   <div class="menu-left">
     <div class="logo">
-      <div class="t1">PokéSurvivor</div>
+      <div class="t1">PokéSurvivor<span class="splash">Folagor, Sekiam, PokeAlex: ¿un hueco?</span></div>
       <div class="t2">Mundo Misterioso</div>
     </div>
     <div class="partner-card">
@@ -182,6 +188,8 @@
         <button class="menu-item play" data-go="play">Jugar<small>Entra en la mazmorra</small></button>
         <button class="menu-item" data-go="dex">Pokémon<small id="menu-dex-count">Tu colección</small></button>
         <button class="menu-item" data-go="upgrades">Mejoras<small>Haz más fuerte cada run</small></button>
+        <button class="menu-item" data-go="shop">Tienda Kecleon<small>Mentas, Cápsulas y MT</small></button>
+        <button class="menu-item" data-go="bag">Mochila<small id="menu-bag-sub">Vacía</small></button>
         <button class="menu-item" data-go="gacha">Gacha<small>9 regiones · Pokémon y shinies</small></button>
         <button class="menu-item" data-go="goals">Misiones<small id="menu-goals-sub">Misiones, logros y perfil</small></button>
         <button class="menu-item" data-go="friends">Amigos<small id="menu-friends-sub">Juega en grupo, hasta 4</small></button>
@@ -199,7 +207,9 @@
   <div class="pill"><span class="coin"></span><span id="coins">0</span></div>
   <div class="pill" id="tickets-pill" title="Tickets del gacha"></div>
   <div class="pill" id="user-pill"></div>
+  <button id="btn-save" class="btn small gold save-btn hidden" title="Guardar la partida en la nube"></button>
   <button id="btn-news" class="btn small ghost news-btn" title="Novedades"></button>
+  <button id="btn-yt" class="btn small ghost yt-btn" title="Mi canal de YouTube"></button>
   <button id="btn-support" class="btn small gold hidden" title="Apoyar el proyecto"></button>
   <button id="btn-sound" class="btn small ghost" title="Sonido"></button>
   <button id="btn-full" class="btn small ghost hidden" title="Pantalla completa"></button>
@@ -231,6 +241,15 @@
   </div>
 </section>
 
+<!-- ====== Avisos de una actualización (una vez por navegador, ver LoginUI.updateNotices) ====== -->
+<section id="scr-savenote" class="scr dim hidden">
+  <div class="box" style="width:min(460px,100%)" translate="no">
+    <h2 id="savenote-title"></h2>
+    <div id="savenote-body"></div>
+    <button class="btn gold" id="savenote-ok" type="button" style="width:100%;margin-top:10px"></button>
+  </div>
+</section>
+
 <!-- ====== Apoyar el proyecto (donaciones) ====== -->
 <section id="scr-support" class="scr dim hidden">
   <div class="box support">
@@ -247,6 +266,7 @@
       <button class="gen-tab" data-t="sound">Sonido</button>
       <button class="gen-tab" data-t="gfx">Gráficos</button>
       <button class="gen-tab" data-t="ctl">Controles</button>
+      <button class="gen-tab" data-t="a11y">Accesibilidad</button>
       <button class="gen-tab" data-t="acc">Cuenta</button>
       <button class="gen-tab" data-t="about">Acerca de</button>
     </div>
@@ -305,20 +325,7 @@
     <p class="boot-ld">Cargando…</p>
   </div>
 </div>
-<script>
-  (function () {
-    var s = null; try { s = localStorage.getItem('ps.lang'); } catch (e) {}
-    var n = ((navigator.languages && navigator.languages[0]) || navigator.language || 'es').toLowerCase();
-    var l = s === 'es' || s === 'en' || s === 'zh' ? s : (/\/en(\/|$)/.test(location.pathname) ? 'en' : /\/zh(\/|$)/.test(location.pathname) ? 'zh'
-      : (n.indexOf('es') === 0 ? 'es' : n.indexOf('zh') === 0 ? 'zh' : 'en'));
-    document.documentElement.lang = l === 'zh' ? 'zh-Hant' : l;
-    if (l === 'en' || l === 'zh') {
-      var p = document.querySelectorAll('#boot p');
-      p[0].textContent = l === 'zh' ? '寶可夢生存遊戲，在瀏覽器和手機上免費遊玩。' : 'A Pokémon survival game, free in your browser and on mobile.';
-      p[1].textContent = l === 'zh' ? '載入中…' : 'Loading…';
-    }
-  })();
-</script>
+<script src="js/boot.js"></script>
 <div id="tap-start" class="tapstart hidden">
   <div class="boot-in">
     <h1>PokéSurvivor</h1>
@@ -386,7 +393,7 @@
 <!-- ====== Ranking ====== -->
 <section id="scr-rank" class="scr dim hidden">
   <div class="box wide">
-    <div class="row between"><h2>Ranking <span class="sub" style="font-size:15px">· tiempo aguantado</span></h2><span class="row" style="gap:6px"><button id="rk-mod" class="btn small ghost hidden">Moderación</button><button class="btn small ghost" data-back>Volver</button></span></div>
+    <div class="row between"><h2>Ranking</h2><span class="row" style="gap:6px"><button id="rk-mod" class="btn small ghost hidden">Moderación</button><button class="btn small ghost" data-back>Volver</button></span></div>
     <div class="gen-tabs" id="rk-mode"></div>
     <div class="filters" id="rk-period"></div>
     <div class="row rk-tools">
@@ -395,8 +402,10 @@
       <datalist id="rk-dl"></datalist>
       <button id="rk-clear" class="btn small ghost hidden">Quitar filtro</button>
     </div>
-    <div id="rk-list" class="rk-list"></div>
-    <div id="rk-me" class="rk-me"></div>
+    <div class="rk-split">
+      <div class="rk-col"><h3 class="rk-h">Daño a Arceus</h3><div id="rk-dlist" class="rk-list"></div><div id="rk-dme" class="rk-me"></div></div>
+      <div class="rk-col"><h3 class="rk-h">Tiempo aguantado</h3><div id="rk-list" class="rk-list"></div><div id="rk-me" class="rk-me"></div></div>
+    </div>
   </div>
 </section>
 
@@ -449,11 +458,48 @@
     <div class="gen-tabs" id="dex-gens"></div>
     <div class="split" style="margin-top:8px">
       <div>
+        <div class="dex-tools">
+          <input id="dex-q" type="search" placeholder="Buscar por nombre o número" autocomplete="off" spellcheck="false">
+          <select id="dex-type" title="Tipo"></select>
+          <span id="dex-count" class="sub"></span>
+          <button class="btn small ghost hidden" id="dex-clear" type="button">Limpiar</button>
+        </div>
         <div class="filters" id="dex-filters"></div>
+        <div class="filters dex-sort" id="dex-sort"></div>
         <div class="grid" id="dex-grid"></div>
       </div>
       <div class="panel" id="dex-detail"></div>
     </div>
+  </div>
+</section>
+
+<!-- ====== Tienda Kecleon (20-10-2026, del PR #236 de TheAdro7) ====== -->
+<section id="scr-shop" class="scr dim hidden">
+  <div class="box wide shop-box">
+    <!-- El puesto: cae, se despliega el toldo, sube la persiana y salen los dos Kecleon (ver shop-ui.js). -->
+    <div class="shop-stall" id="shop-stall">
+      <!-- Todo el puesto (paisaje, toldo, estanterías, persiana, farolillos y los dos
+           Kecleon) se dibuja en pixel art en este lienzo: ver Scene en shop-ui.js. -->
+      <canvas id="shop-scene" class="shop-scene"></canvas>
+      <div class="shop-sign" id="shop-sign"><span>Tienda Kecleon</span></div>
+      <div class="shop-bubble hide" id="shop-bubble"></div>
+    </div>
+    <div class="shop-inner">
+      <div class="row between">
+        <h2 style="margin:0">Tienda Kecleon</h2>
+        <button class="btn small ghost" data-back>Volver</button>
+      </div>
+      <p class="sub" style="margin:8px 0 0" id="shop-hello">¡Bienvenido! Mentas, Cápsulas y MT. Lo que compres va a tu Mochila (en el menú principal); úsalo desde la ficha de cada Pokémon en la colección.</p>
+      <div id="shop-body"></div>
+    </div>
+  </div>
+</section>
+
+<!-- ====== Mochila (desde el menú principal, sin entrar en la tienda) ====== -->
+<section id="scr-bag" class="scr dim hidden">
+  <div class="box wide">
+    <div class="row between"><h2>Mochila</h2><button class="btn small ghost" data-back>Volver</button></div>
+    <div id="bag-body"></div>
   </div>
 </section>
 
@@ -489,9 +535,10 @@
           <div class="feat" id="gacha-feat"></div>
         </div>
         <div class="row" style="margin-top:14px">
-          <button id="pull-1" class="btn grow" data-sfx="none">Tirar ×1 · <span id="cost-1"></span></button>
           <button id="pull-10" class="btn gold grow" data-sfx="none">Tirar ×10 · <span id="cost-10"></span></button>
           <button id="pull-10b" class="btn gold grow" data-sfx="none">Tirar ×10 · <span id="cost-10b"></span></button>
+          <button id="pull-100" class="btn gold grow" data-sfx="none">Tirar ×100 · <span id="cost-100"></span></button>
+          <button id="pull-100b" class="btn gold grow" data-sfx="none">Tirar ×100 · <span id="cost-100b"></span></button>
         </div>
         <p class="note tickets-line" id="gacha-tickets"></p>
         <p class="note" id="gacha-pity"></p>
@@ -504,6 +551,7 @@
 <div id="pull-fx" class="hidden">
   <canvas id="slot" width="176" height="170" title="Clic para acelerar"></canvas>
   <div class="pull-results" id="pull-results"></div>
+  <button id="pull-skip" class="btn small ghost hidden">Saltar</button>
   <button id="pull-close" class="btn gold hidden">Continuar</button>
 </div>
 
@@ -537,17 +585,18 @@
 </section>
 
 <section id="scr-pause" class="scr dim hidden">
-  <div class="box center" style="width:min(460px,100%)">
+  <div class="box center pause-box">
     <h2>Pausa</h2>
-    <p class="sub kbd-hint"><kbd>WASD</kbd> moverse · <kbd>1</kbd>–<kbd>4</kbd> movimiento · <kbd>Q</kbd>/<kbd>E</kbd> ciclar · <kbd>Esc</kbd> pausa</p>
-    <p class="sub touch-hint">Arrastra el dedo para moverte · toca un ataque para cambiarlo</p>
+    <p class="sub kbd-hint"><kbd>WASD</kbd> moverse · <kbd>1</kbd>–<kbd>4</kbd> movimiento · <kbd>Q</kbd>/<kbd>E</kbd> ciclar · <kbd>5</kbd>–<kbd>8</kbd> esferas · <kbd>Esc</kbd> pausa</p>
+    <p class="sub touch-hint">Arrastra el dedo para moverte · toca un ataque para cambiarlo · toca una esfera para usarla</p>
     <p id="pause-coop" class="note hidden">Partida en grupo: el juego sigue mientras estás aquí.</p>
-    <div id="pause-sound" class="sound-inline"></div>
     <div class="row" style="justify-content:center">
       <button id="btn-resume" class="btn gold">Continuar</button>
       <button id="btn-pause-settings" class="btn">Ajustes</button>
       <button id="btn-quit" class="btn">Abandonar run</button>
     </div>
+    <div id="pause-sum" class="pause-sum"></div>
+    <div id="pause-sound" class="sound-inline"></div>
   </div>
 </section>
 
@@ -564,7 +613,6 @@
 <script defer src="js/core/util.js"></script>
 <script defer src="js/core/i18n.js"></script>
 <script defer src="js/data/lang-en.js"></script>
-<script defer src="js/data/lang-zh.js"></script>
 <script defer src="js/core/settings.js"></script>
 <script defer src="js/data/music.js"></script>
 <script defer src="js/data/pokedex.js"></script>
@@ -575,15 +623,20 @@
 <script defer src="js/core/audio.js"></script>
 <script defer src="js/core/input.js"></script>
 <script defer src="js/core/touch.js"></script>
+<script defer src="js/core/gamepad.js"></script>
 <script defer src="js/core/sprites.js"></script>
 <script defer src="js/core/camera.js"></script>
 <!-- datos de juego -->
 <script defer src="js/data/moves.js"></script>
+<script defer src="js/data/natures.js"></script>
+<script defer src="js/data/abilities.js"></script>
+<script defer src="js/data/tms.js"></script>
 <script defer src="js/data/types.js"></script>
 <script defer src="js/data/starters.js"></script>
 <script defer src="js/data/enemies.js"></script>
 <script defer src="js/data/upgrades.js"></script>
 <script defer src="js/data/items.js"></script>
+<script defer src="js/data/shop.js"></script>
 <script defer src="js/data/missions.js"></script>
 <script defer src="js/data/achievements.js"></script>
 <script defer src="js/data/funding.js"></script>
@@ -599,6 +652,9 @@
 <script defer src="js/entities/pickup.js"></script>
 <script defer src="js/entities/player.js"></script>
 <!-- sistemas -->
+<script defer src="js/systems/stats.js"></script>
+<script defer src="js/systems/mons.js"></script>
+<script defer src="js/data/ability-fx.js"></script>
 <script defer src="js/systems/combat.js"></script>
 <script defer src="js/systems/spawner.js"></script>
 <script defer src="js/systems/levelup.js"></script>
@@ -611,8 +667,10 @@
 <script defer src="js/systems/pathing.js"></script>
 <script defer src="js/systems/progress.js"></script>
 <script defer src="js/systems/hazards.js"></script>
+<script defer src="js/systems/orbs.js"></script>
 <!-- red: amigos, salas, cooperativo y ranking -->
 <script defer src="js/net/social.js"></script>
+<script defer src="js/net/codec.js"></script>
 <script defer src="js/net/net.js"></script>
 <script defer src="js/net/coop.js"></script>
 <script defer src="js/net/ranking.js"></script>
@@ -625,6 +683,7 @@
 <script defer src="js/ui/menu.js"></script>
 <script defer src="js/ui/slots.js"></script>
 <script defer src="js/ui/gacha-ui.js"></script>
+<script defer src="js/ui/shop-ui.js"></script>
 <script defer src="js/ui/run-ui.js"></script>
 <script defer src="js/ui/social-ui.js"></script>
 <script defer src="js/ui/ranking-ui.js"></script>
@@ -634,6 +693,7 @@
 <script defer src="js/ui/layout-ui.js"></script>
 <script defer src="js/ui/support-ui.js"></script>
 <script defer src="js/ui/news-ui.js"></script>
+<script defer src="js/ui/live-ui.js"></script>
 <script defer src="js/core/updater.js"></script>
 <!-- juego -->
 <script defer src="js/game.js"></script>
